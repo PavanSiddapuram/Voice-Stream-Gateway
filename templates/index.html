@@ -245,6 +245,39 @@
             user-select: none;
         }
 
+        /* Language selector pills */
+        .lang-selector {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.4rem;
+            margin-top: 0.8rem;
+        }
+
+        .lang-pill {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 0.8rem;
+            padding: 0.3rem 0.75rem;
+            border-radius: 20px;
+            border: 1px solid var(--border-color);
+            background: rgba(255,255,255,0.04);
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            user-select: none;
+        }
+
+        .lang-pill:hover {
+            border-color: var(--accent-purple);
+            color: #fff;
+        }
+
+        .lang-pill.active {
+            background: rgba(138, 43, 226, 0.25);
+            border-color: var(--accent-purple);
+            color: #fff;
+            box-shadow: 0 0 10px rgba(138,43,226,0.3);
+        }
+
         /* Terminal Logs */
         .terminal {
             height: 220px;
@@ -342,6 +375,20 @@
                     </label>
                 </div>
 
+                <!-- Language Selector -->
+                <div style="margin-top: 1rem; border-top: 1px solid var(--border-color); padding-top: 1rem;">
+                    <label style="display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem; text-transform: uppercase;">Input Language</label>
+                    <div class="lang-selector" id="langSelector">
+                        <div class="lang-pill active" data-lang="auto">Auto-detect</div>
+                        <div class="lang-pill" data-lang="hi">हिंदी</div>
+                        <div class="lang-pill" data-lang="ta">தமிழ்</div>
+                        <div class="lang-pill" data-lang="te">తెలుగు</div>
+                        <div class="lang-pill" data-lang="kn">ಕನ್ನಡ</div>
+                        <div class="lang-pill" data-lang="bn">বাংলা</div>
+                        <div class="lang-pill" data-lang="en">English</div>
+                    </div>
+                </div>
+
                 <!-- Simulation Tools -->
                 <div style="margin-top: 1.5rem; border-top: 1px solid var(--border-color); padding-top: 1rem;">
                     <label style="display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem; text-transform: uppercase;">Simulated Input (No Microphone Fallback)</label>
@@ -381,6 +428,14 @@
                         <div class="label">Session Resumed</div>
                         <div id="statResumed" class="value">No</div>
                     </div>
+                    <div class="stat-card">
+                        <div class="label">Detected Language</div>
+                        <div id="statLang" class="value">—</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="label">Adaptive TTFT Limit</div>
+                        <div id="statTTFT" class="value">—</div>
+                    </div>
                 </div>
             </div>
 
@@ -416,7 +471,20 @@
         const statFallbackHits = document.getElementById("statFallbackHits");
         const statTurns = document.getElementById("statTurns");
         const statResumed = document.getElementById("statResumed");
+        const statLang = document.getElementById("statLang");
+        const statTTFT = document.getElementById("statTTFT");
         const terminal = document.getElementById("terminal");
+
+        // Language selector state
+        let selectedLang = "auto";
+        document.getElementById("langSelector").addEventListener("click", (e) => {
+            const pill = e.target.closest(".lang-pill");
+            if (!pill) return;
+            document.querySelectorAll(".lang-pill").forEach(p => p.classList.remove("active"));
+            pill.classList.add("active");
+            selectedLang = pill.dataset.lang;
+            logLine("system", `Language set to: ${pill.innerText}`);
+        });
 
         let ws = null;
         let audioContext = null;
@@ -498,7 +566,7 @@
             const prompt = txtPrompt.value.trim();
             if (prompt && ws && ws.readyState === WebSocket.OPEN) {
                 logLine("system", "Simulating speech completed: " + prompt);
-                ws.send(JSON.stringify({ "event": "speech_end", "prompt": prompt }));
+                ws.send(JSON.stringify({ "event": "speech_end", "prompt": prompt, "language": selectedLang }));
                 txtPrompt.value = "";
             }
         });
@@ -544,7 +612,8 @@
                     if (ws && ws.readyState === WebSocket.OPEN) {
                         ws.send(JSON.stringify({
                             "event": "speech_end",
-                            "prompt": "explain consistency in database clusters"
+                            "prompt": "explain consistency in database clusters",
+                            "language": selectedLang,
                         }));
                     }
                 }
@@ -622,6 +691,11 @@
                         statTurns.innerText = info.history_turns;
                         const resumeNote = info.resumed ? ` (resumed — ${info.history_turns} prior turns in KV-cache)` : "";
                         logLine("system", `Assigned to ${info.worker}${resumeNote}`);
+                    } else if (msg.event === "language_detected") {
+                        const info = JSON.parse(msg.data);
+                        statLang.innerText = info.name;
+                        statTTFT.innerText = `${info.adaptive_timeout_ms} ms`;
+                        logLine("system", `Language: ${info.name} | Adaptive TTFT limit: ${info.adaptive_timeout_ms} ms`);
                     } else if (msg.event === "status") {
                         setAgentState(currentState, msg.data);
                     } else if (msg.event === "transcription") {
