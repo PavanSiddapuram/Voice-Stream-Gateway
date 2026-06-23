@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Gateway Agent Portal</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Space+Grotesk:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-gradient: linear-gradient(135deg, #0f0c20 0%, #15102a 50%, #060210 100%);
+            --panel-bg: rgba(25, 18, 45, 0.45);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --accent-purple: #8a2be2;
+            --accent-cyan: #00f2fe;
+            --accent-green: #39ff14;
+            --text-main: #f3f0ff;
+            --text-muted: #a39cb5;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background: var(--bg-gradient);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            align-items: center;
+            padding: 2rem;
+            overflow-x: hidden;
+        }
+
+        header {
+            width: 100%;
+            max-width: 1200px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+
+        header h1 {
+            font-family: 'Space Grotesk', sans-serif;
+            font-weight: 700;
+            background: linear-gradient(to right, #fff, var(--text-muted));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-size: 1.8rem;
+        }
+
+        .subtitle {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            border: 1px solid var(--border-color);
+            padding: 0.4rem 1rem;
+            border-radius: 50px;
+            background: rgba(255, 255, 255, 0.02);
+            backdrop-filter: blur(10px);
+        }
+
+        main {
+            width: 100%;
+            max-width: 1200px;
+            display: grid;
+            grid-template-columns: 1fr 1.2fr;
+            gap: 2.5rem;
+            align-items: start;
+            flex-grow: 1;
+        }
+
+        /* Left Side - Visual Agent Pulsing Ring */
+        .agent-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 24px;
+            padding: 4rem 2rem;
+            backdrop-filter: blur(20px);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+            height: 100%;
+            min-height: 480px;
+            position: relative;
+        }
+
+        .pulse-ring {
+            width: 200px;
+            height: 200px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            background: rgba(255, 255, 255, 0.03);
+            border: 2px solid rgba(255, 255, 255, 0.1);
+            transition: all 0.5s ease;
+        }
+
+        .pulse-ring.listening {
+            border-color: var(--accent-green);
+            box-shadow: 0 0 40px rgba(57, 255, 20, 0.25);
+            animation: pulse-green 2s infinite;
+        }
+
+        .pulse-ring.thinking {
+            border-color: var(--accent-purple);
+            box-shadow: 0 0 40px rgba(138, 43, 226, 0.3);
+            animation: pulse-purple 1.5s infinite;
+        }
+
+        .pulse-ring.speaking {
+            border-color: var(--accent-cyan);
+            box-shadow: 0 0 50px rgba(0, 242, 254, 0.35);
+            animation: pulse-cyan 1s infinite;
+        }
+
+        .agent-icon {
+            font-size: 4rem;
+            transition: all 0.3s ease;
+        }
+
+        .agent-status-label {
+            margin-top: 2rem;
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 1.4rem;
+            font-weight: 700;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .agent-sub-status {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            margin-top: 0.5rem;
+        }
+
+        /* Right Side - Panels */
+        .workspace {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .panel {
+            background: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            padding: 1.5rem;
+            backdrop-filter: blur(20px);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        .panel h2 {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 1.2rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1rem;
+        }
+
+        .stat-card {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.04);
+            border-radius: 12px;
+            padding: 1rem;
+        }
+
+        .stat-card .label {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .stat-card .value {
+            font-size: 1.3rem;
+            font-weight: 600;
+            margin-top: 0.3rem;
+            color: #fff;
+        }
+
+        /* Controls */
+        .controls-row {
+            display: flex;
+            gap: 1rem;
+            margin-top: 0.5rem;
+        }
+
+        button {
+            font-family: 'Outfit', sans-serif;
+            font-size: 0.95rem;
+            font-weight: 600;
+            padding: 0.8rem 1.5rem;
+            border-radius: 12px;
+            border: none;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            flex-grow: 1;
+        }
+
+        .btn-primary {
+            background: linear-gradient(to right, var(--accent-purple), #a855f7);
+            color: white;
+            box-shadow: 0 4px 15px rgba(138, 43, 226, 0.4);
+        }
+
+        .btn-primary:hover {
+            opacity: 0.9;
+            transform: translateY(-2px);
+        }
+
+        .btn-danger {
+            background: rgba(239, 68, 68, 0.15);
+            color: #f87171;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+
+        .btn-danger:hover {
+            background: rgba(239, 68, 68, 0.25);
+        }
+
+        .toggle-container {
+            display: flex;
+            align-items: center;
+            gap: 0.8rem;
+            cursor: pointer;
+            font-size: 0.9rem;
+            user-select: none;
+        }
+
+        /* Terminal Logs */
+        .terminal {
+            height: 220px;
+            background: rgba(5, 2, 15, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 1rem;
+            font-family: 'Space Grotesk', monospace;
+            font-size: 0.9rem;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .terminal-line {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .terminal-line .role {
+            font-weight: 700;
+        }
+
+        .terminal-line.user .role {
+            color: var(--accent-green);
+        }
+
+        .terminal-line.assistant .role {
+            color: var(--accent-cyan);
+        }
+
+        .terminal-line.system {
+            color: var(--text-muted);
+            font-style: italic;
+        }
+
+        /* Animations */
+        @keyframes pulse-green {
+            0% { transform: scale(1); box-shadow: 0 0 20px rgba(57, 255, 20, 0.1); }
+            50% { transform: scale(1.03); box-shadow: 0 0 45px rgba(57, 255, 20, 0.3); }
+            100% { transform: scale(1); box-shadow: 0 0 20px rgba(57, 255, 20, 0.1); }
+        }
+
+        @keyframes pulse-purple {
+            0% { transform: scale(1); box-shadow: 0 0 20px rgba(138, 43, 226, 0.15); }
+            50% { transform: scale(1.05); box-shadow: 0 0 50px rgba(138, 43, 226, 0.45); }
+            100% { transform: scale(1); box-shadow: 0 0 20px rgba(138, 43, 226, 0.15); }
+        }
+
+        @keyframes pulse-cyan {
+            0% { transform: scale(1); box-shadow: 0 0 20px rgba(0, 242, 254, 0.2); }
+            50% { transform: scale(1.08); box-shadow: 0 0 60px rgba(0, 242, 254, 0.5); }
+            100% { transform: scale(1); box-shadow: 0 0 20px rgba(0, 242, 254, 0.2); }
+        }
+
+        footer {
+            margin-top: 2rem;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>VOICE GATEWAY</h1>
+        <div class="subtitle">Smart Routing & Barge-In Demo</div>
+    </header>
+
+    <main>
+        <!-- Left Side: Pulsing Agent Circle -->
+        <div class="agent-container">
+            <div id="pulseRing" class="pulse-ring">
+                <div id="agentIcon" class="agent-icon">🎤</div>
+            </div>
+            <div id="agentStatus" class="agent-status-label">Offline</div>
+            <div id="agentSubStatus" class="agent-sub-status">Click Start Conversation to connect</div>
+        </div>
+
+        <!-- Right Side: Metrics & Controls & Terminal -->
+        <div class="workspace">
+            <!-- Controls Panel -->
+            <div class="panel">
+                <h2>Controls</h2>
+                <div class="controls-row">
+                    <button id="btnConnect" class="btn-primary">Start Conversation</button>
+                    <button id="btnBargeIn" class="btn-danger" disabled>Manual Barge-in</button>
+                </div>
+                
+                <div class="controls-row" style="margin-top: 1rem; justify-content: space-between; align-items: center;">
+                    <label class="toggle-container">
+                        <input type="checkbox" id="chkLatency">
+                        Simulate Network Degradation (SLM Fallback)
+                    </label>
+                </div>
+
+                <!-- Simulation Tools -->
+                <div style="margin-top: 1.5rem; border-top: 1px solid var(--border-color); padding-top: 1rem;">
+                    <label style="display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem; text-transform: uppercase;">Simulated Input (No Microphone Fallback)</label>
+                    <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
+                        <input type="text" id="txtPrompt" placeholder="Type prompt to simulate talking..." style="flex-grow: 1; padding: 0.6rem; border-radius: 8px; border: 1px solid var(--border-color); background: rgba(0,0,0,0.2); color: #fff; font-family: inherit; font-size: 0.9rem;" disabled>
+                        <button id="btnSendPrompt" style="padding: 0.6rem 1.2rem; border-radius: 8px; width: auto; background: var(--accent-purple); color: #fff; font-size: 0.9rem; flex-grow: 0;" disabled>Send</button>
+                    </div>
+                    <button id="btnSimulateMic" style="background: rgba(138, 43, 226, 0.15); color: #c084fc; border: 1px solid rgba(138, 43, 226, 0.3); font-size: 0.9rem; width: 100%; display: block;" disabled>Simulate Live Mic Stream (3s)</button>
+                </div>
+            </div>
+
+            <!-- Stats Panel -->
+            <div class="panel">
+                <h2>Performance Metrics</h2>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="label">Sticky GPU Worker</div>
+                        <div id="statWorker" class="value">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="label">Session ID</div>
+                        <div id="statSession" class="value">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="label">Primary Hits</div>
+                        <div id="statPrimaryHits" class="value">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="label">Fallback Hits</div>
+                        <div id="statFallbackHits" class="value">0</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Terminal Panel -->
+            <div class="panel">
+                <h2>Conversation Logs</h2>
+                <div id="terminal" class="terminal">
+                    <div class="terminal-line system">Logs will appear here when connected...</div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        AI Systems Capstone Demonstration Portfolio Portal
+    </footer>
+
+    <script>
+        const btnConnect = document.getElementById("btnConnect");
+        const btnBargeIn = document.getElementById("btnBargeIn");
+        const chkLatency = document.getElementById("chkLatency");
+        const txtPrompt = document.getElementById("txtPrompt");
+        const btnSendPrompt = document.getElementById("btnSendPrompt");
+        const btnSimulateMic = document.getElementById("btnSimulateMic");
+        const pulseRing = document.getElementById("pulseRing");
+        const agentIcon = document.getElementById("agentIcon");
+        const agentStatus = document.getElementById("agentStatus");
+        const agentSubStatus = document.getElementById("agentSubStatus");
+        
+        const statWorker = document.getElementById("statWorker");
+        const statSession = document.getElementById("statSession");
+        const statPrimaryHits = document.getElementById("statPrimaryHits");
+        const statFallbackHits = document.getElementById("statFallbackHits");
+        const terminal = document.getElementById("terminal");
+
+        let ws = null;
+        let audioContext = null;
+        let micStream = null;
+        let processor = null;
+        let activeSources = [];
+        let nextPlayTime = 0;
+        let isConnected = false;
+        let currentState = "Offline";
+        let simulateInterval = null;
+
+        // Generate a random session ID
+        const sessionID = "session-" + Math.floor(Math.random() * 1000000);
+        statSession.innerText = sessionID;
+
+        // Terminal logger helper
+        function logLine(role, text) {
+            // Write output to browser dev console (F12)
+            if (role === "system") {
+                if (text.startsWith("WARNING")) console.warn("[SYSTEM]", text);
+                else if (text.startsWith("ERROR") || text.includes("failed") || text.includes("blocked") || text.includes("Could not") || text.includes("halted")) console.error("[SYSTEM]", text);
+                else console.log("[SYSTEM]", text);
+            } else {
+                console.log(`[${role}]`, text);
+            }
+
+            const line = document.createElement("div");
+            line.className = "terminal-line " + role.toLowerCase();
+            
+            if (role === "system") {
+                line.innerHTML = `<span>[SYSTEM] ${text}</span>`;
+            } else {
+                line.innerHTML = `<span class="role">${role}:</span> <span>${text}</span>`;
+            }
+            
+            terminal.appendChild(line);
+            terminal.scrollTop = terminal.scrollHeight;
+        }
+
+        // Toggle state styling
+        function setAgentState(state, subtext = "") {
+            currentState = state;
+            agentStatus.innerText = state;
+            agentSubStatus.innerText = subtext;
+
+            pulseRing.className = "pulse-ring";
+            if (state === "Listening") {
+                pulseRing.classList.add("listening");
+                agentIcon.innerText = "🎙️";
+            } else if (state === "Thinking") {
+                pulseRing.classList.add("thinking");
+                agentIcon.innerText = "🧠";
+            } else if (state === "Speaking") {
+                pulseRing.classList.add("speaking");
+                agentIcon.innerText = "🔊";
+            } else {
+                agentIcon.innerText = "🎤";
+            }
+        }
+
+        // Connect button handler
+        btnConnect.addEventListener("click", async () => {
+            if (isConnected) {
+                disconnect();
+                return;
+            }
+            await connect();
+        });
+
+        // Barge-in button handler
+        btnBargeIn.addEventListener("click", () => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ "event": "barge_in" }));
+            }
+        });
+
+        // Text input handlers
+        btnSendPrompt.addEventListener("click", () => {
+            const prompt = txtPrompt.value.trim();
+            if (prompt && ws && ws.readyState === WebSocket.OPEN) {
+                logLine("system", "Simulating speech completed: " + prompt);
+                ws.send(JSON.stringify({ "event": "speech_end", "prompt": prompt }));
+                txtPrompt.value = "";
+            }
+        });
+        
+        txtPrompt.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                btnSendPrompt.click();
+            }
+        });
+
+        // Simulate Microphone Live Streaming (3 seconds)
+        btnSimulateMic.addEventListener("click", () => {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            
+            stopAllAudio();
+            setAgentState("Listening", "Simulating speaking... (Streaming binary frames)");
+            logLine("system", "Started simulated microphone stream...");
+            
+            if (simulateInterval) {
+                clearInterval(simulateInterval);
+            }
+            
+            let secondsElapsed = 0;
+            // Send 1024-byte PCM arrays every 50ms
+            simulateInterval = setInterval(() => {
+                // Safeguard: Check connection state inside interval loop
+                if (!ws || ws.readyState !== WebSocket.OPEN) {
+                    clearInterval(simulateInterval);
+                    simulateInterval = null;
+                    logLine("system", "Simulation halted: WebSocket disconnected.");
+                    return;
+                }
+
+                const dummyFrame = new Int16Array(512); // 1024 bytes
+                ws.send(dummyFrame.buffer);
+                
+                secondsElapsed += 0.05;
+                if (secondsElapsed >= 3.0) {
+                    clearInterval(simulateInterval);
+                    simulateInterval = null;
+                    logLine("system", "Simulated speech completed. Triggering response pipeline...");
+                    
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({
+                            "event": "speech_end",
+                            "prompt": "explain consistency in database clusters"
+                        }));
+                    }
+                }
+            }, 50);
+        });
+
+        // Network latency toggle
+        chkLatency.addEventListener("change", async () => {
+            try {
+                const resp = await fetch("http://localhost:8000/toggle-latency");
+                const text = await resp.text();
+                logLine("system", text);
+                updateStats();
+            } catch (e) {
+                logLine("system", "Failed to contact latency toggle: " + e.message);
+            }
+        });
+
+        // Audio resampling function (resamples Float32 audio)
+        function downsampleBuffer(buffer, inputSampleRate, outputSampleRate) {
+            if (inputSampleRate === outputSampleRate) {
+                return buffer;
+            }
+            const sampleRateRatio = inputSampleRate / outputSampleRate;
+            const newLength = Math.round(buffer.length / sampleRateRatio);
+            const result = new Float32Array(newLength);
+            let offsetResult = 0;
+            let offsetBuffer = 0;
+            while (offsetResult < result.length) {
+                const nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
+                let accum = 0, count = 0;
+                for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
+                    accum += buffer[i];
+                    count++;
+                }
+                result[offsetResult] = count > 0 ? accum / count : 0;
+                offsetResult++;
+                offsetBuffer = nextOffsetBuffer;
+            }
+            return result;
+        }
+
+        async function connect() {
+            logLine("system", "Connecting to Voice Gateway WebSocket...");
+            btnConnect.innerText = "Disconnect";
+            btnConnect.style.background = "#ef4444";
+            isConnected = true;
+            btnBargeIn.disabled = false;
+            txtPrompt.disabled = false;
+            btnSendPrompt.disabled = false;
+            btnSimulateMic.disabled = false;
+
+            ws = new WebSocket(`ws://localhost:8000/ws?session_id=${sessionID}`);
+
+            ws.onopen = async () => {
+                logLine("system", "WebSocket connected successfully.");
+                setAgentState("Listening", "Ready. Use simulated input or speak into microphone.");
+                await startMicrophone();
+                await updateStats(); // Fetch metrics and sync degradation checkbox
+            };
+
+            ws.onmessage = async (event) => {
+                if (event.data instanceof Blob) {
+                    // Receive PCM audio chunk from TTS
+                    setAgentState("Speaking", "Synthesizing AI output audio...");
+                    const arrayBuffer = await event.data.arrayBuffer();
+                    playPCMChunk(arrayBuffer);
+                } else {
+                    const msg = JSON.parse(event.data);
+                    
+                    if (msg.event === "status") {
+                        setAgentState(currentState, msg.data);
+                    } else if (msg.event === "transcription") {
+                        logLine("User", msg.data);
+                        setAgentState("Thinking", "AI is processing prompts...");
+                    } else if (msg.event === "assistant_response") {
+                        logLine("Assistant", msg.data);
+                        setAgentState("Listening", "Ready...");
+                        updateStats();
+                    } else if (msg.event === "barge_in_triggered") {
+                        logLine("system", msg.data);
+                        stopAllAudio();
+                        if (simulateInterval) {
+                            clearInterval(simulateInterval);
+                            simulateInterval = null;
+                        }
+                        setAgentState("Listening", "Barge-in verified. Listening...");
+                    }
+                }
+            };
+
+            ws.onclose = () => {
+                logLine("system", "WebSocket connection closed.");
+                disconnect();
+            };
+
+            ws.onerror = (e) => {
+                logLine("system", "WebSocket error occurred.");
+                disconnect();
+            };
+        }
+
+        function disconnect() {
+            isConnected = false;
+            btnConnect.innerText = "Start Conversation";
+            btnConnect.style.background = "linear-gradient(to right, var(--accent-purple), #a855f7)";
+            btnBargeIn.disabled = true;
+            txtPrompt.disabled = true;
+            btnSendPrompt.disabled = true;
+            btnSimulateMic.disabled = true;
+            setAgentState("Offline", "Click Start Conversation to connect");
+            
+            if (simulateInterval) {
+                clearInterval(simulateInterval);
+                simulateInterval = null;
+            }
+            stopMicrophone();
+            stopAllAudio();
+            
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+        }
+
+        async function startMicrophone() {
+            // Check secure context
+            if (!window.isSecureContext) {
+                logLine("system", "WARNING: Microphone blocked due to insecure context (non-localhost HTTP). Use http://localhost:8000/ to test audio input.");
+                return;
+            }
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                logLine("system", "WARNING: navigator.mediaDevices.getUserMedia is not supported in this browser environment.");
+                return;
+            }
+
+            try {
+                // Request microphone permission FIRST to establish browser consent before instantiating AudioContext
+                try {
+                    micStream = await navigator.mediaDevices.getUserMedia({
+                        audio: {
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            autoGainControl: true
+                        }
+                    });
+                } catch (err) {
+                    logLine("system", "Advanced constraints failed. Attempting basic microphone capture...");
+                    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                }
+
+                // Permission granted! Now instantiate AudioContext using hardware defaults
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                if (audioContext.state === "suspended") {
+                    await audioContext.resume();
+                }
+
+                const source = audioContext.createMediaStreamSource(micStream);
+                
+                // Create script processor (1024 buffer size, 1 channel)
+                processor = audioContext.createScriptProcessor(1024, 1, 1);
+                
+                processor.onaudioprocess = (e) => {
+                    if (currentState !== "Listening") return;
+                    
+                    const inputData = e.inputBuffer.getChannelData(0);
+                    // Resample hardware buffer down to 16kHz
+                    const resampledData = downsampleBuffer(inputData, audioContext.sampleRate, 16000);
+                    
+                    // Convert Float32 to Int16 PCM
+                    const pcmData = new Int16Array(resampledData.length);
+                    for (let i = 0; i < resampledData.length; i++) {
+                        let val = Math.max(-1, Math.min(1, resampledData[i]));
+                        pcmData[i] = val < 0 ? val * 0x8000 : val * 0x7FFF;
+                    }
+                    
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(pcmData.buffer);
+                    }
+                };
+
+                source.connect(processor);
+                processor.connect(audioContext.destination);
+                
+                logLine("system", "Microphone stream resampler configured successfully.");
+            } catch (err) {
+                logLine("system", "Could not capture microphone input: " + err.message);
+            }
+        }
+
+        function stopMicrophone() {
+            if (micStream) {
+                micStream.getTracks().forEach(t => t.stop());
+                micStream = null;
+            }
+            if (processor) {
+                processor.disconnect();
+                processor = null;
+            }
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+            }
+        }
+
+        function playPCMChunk(arrayBuffer) {
+            if (!audioContext) return;
+            
+            const int16 = new Int16Array(arrayBuffer);
+            const float32 = new Float32Array(int16.length);
+            for (let i = 0; i < int16.length; i++) {
+                float32[i] = int16[i] / 32768.0;
+            }
+
+            const audioBuf = audioContext.createBuffer(1, float32.length, 16000);
+            audioBuf.getChannelData(0).set(float32);
+
+            const source = audioContext.createBufferSource();
+            source.buffer = audioBuf;
+            source.connect(audioContext.destination);
+
+            let now = audioContext.currentTime;
+            if (nextPlayTime < now) {
+                nextPlayTime = now;
+            }
+            
+            source.start(nextPlayTime);
+            nextPlayTime += audioBuf.duration;
+
+            source.onended = () => {
+                const idx = activeSources.indexOf(source);
+                if (idx > -1) activeSources.splice(idx, 1);
+            };
+            activeSources.push(source);
+        }
+
+        function stopAllAudio() {
+            activeSources.forEach(src => {
+                try { src.stop(); } catch(e) {}
+            });
+            activeSources = [];
+            nextPlayTime = 0;
+        }
+
+        async function updateStats() {
+            try {
+                const resp = await fetch("http://localhost:8000/health");
+                const stats = await resp.json();
+                statPrimaryHits.innerText = stats.primary_llm_hits;
+                statFallbackHits.innerText = stats.fallback_slm_hits;
+                
+                // Sync latency checkbox with actual server delay
+                chkLatency.checked = (stats.primary_llm_delay_ms === 400);
+                
+                // Set sticky worker
+                statWorker.innerText = "GPU-Worker-Node-" + (sessionID.charCodeAt(0) % 3);
+            } catch (e) {}
+        }
+    </script>
+</body>
+</html>
