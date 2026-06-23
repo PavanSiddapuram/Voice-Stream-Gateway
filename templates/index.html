@@ -373,6 +373,14 @@
                         <div class="label">Fallback Hits</div>
                         <div id="statFallbackHits" class="value">0</div>
                     </div>
+                    <div class="stat-card">
+                        <div class="label">Conversation Turns</div>
+                        <div id="statTurns" class="value">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="label">Session Resumed</div>
+                        <div id="statResumed" class="value">No</div>
+                    </div>
                 </div>
             </div>
 
@@ -406,6 +414,8 @@
         const statSession = document.getElementById("statSession");
         const statPrimaryHits = document.getElementById("statPrimaryHits");
         const statFallbackHits = document.getElementById("statFallbackHits");
+        const statTurns = document.getElementById("statTurns");
+        const statResumed = document.getElementById("statResumed");
         const terminal = document.getElementById("terminal");
 
         let ws = null;
@@ -605,7 +615,14 @@
                 } else {
                     const msg = JSON.parse(event.data);
                     
-                    if (msg.event === "status") {
+                    if (msg.event === "session_init") {
+                        const info = JSON.parse(msg.data);
+                        statWorker.innerText = info.worker.replace("GPU-Worker-Node-", "Node-");
+                        statResumed.innerText = info.resumed ? `Yes (${info.history_turns} turns)` : "No";
+                        statTurns.innerText = info.history_turns;
+                        const resumeNote = info.resumed ? ` (resumed — ${info.history_turns} prior turns in KV-cache)` : "";
+                        logLine("system", `Assigned to ${info.worker}${resumeNote}`);
+                    } else if (msg.event === "status") {
                         setAgentState(currentState, msg.data);
                     } else if (msg.event === "transcription") {
                         logLine("User", msg.data);
@@ -613,6 +630,8 @@
                     } else if (msg.event === "assistant_response") {
                         logLine("Assistant", msg.data);
                         setAgentState("Listening", "Ready...");
+                        const currentTurns = parseInt(statTurns.innerText || "0");
+                        statTurns.innerText = currentTurns + 1;
                         updateStats();
                     } else if (msg.event === "barge_in_triggered") {
                         logLine("system", msg.data);
@@ -785,12 +804,7 @@
                 const stats = await resp.json();
                 statPrimaryHits.innerText = stats.primary_llm_hits;
                 statFallbackHits.innerText = stats.fallback_slm_hits;
-                
-                // Sync latency checkbox with actual server delay
                 chkLatency.checked = (stats.primary_llm_delay_ms === 400);
-                
-                // Set sticky worker
-                statWorker.innerText = "GPU-Worker-Node-" + (sessionID.charCodeAt(0) % 3);
             } catch (e) {}
         }
     </script>

@@ -161,6 +161,9 @@ class VoiceSession:
         self.generated_tokens: List[str] = []
         self.sent_tokens_count = 0
         self.audio_bytes_received = 0
+        self.connected = False
+        self.created_at = time.time()
+        self.turn_count = 0
 
     def reset_pipeline(self):
         if self.active_task and not self.active_task.done():
@@ -172,16 +175,16 @@ class VoiceSession:
     def handle_barge_in(self) -> Optional[str]:
         if self.state == "Listening":
             return None
-        
+
         prev_state = self.state
         self.reset_pipeline()
-        
+
         # Truncate assistant response history
         spoken_text = ""
         if self.generated_tokens:
             end_idx = min(self.sent_tokens_count, len(self.generated_tokens))
             spoken_text = "".join(self.generated_tokens[:end_idx]).strip()
-            
+
             if self.history and self.history[-1]["role"] == "assistant":
                 self.history[-1]["content"] = spoken_text + " [INTERRUPTED]"
             elif spoken_text:
@@ -190,7 +193,26 @@ class VoiceSession:
         self.state = "Listening"
         return f"Barge-in: interrupted {prev_state}. Truncated response to: '{spoken_text}'"
 
+# Sessions persist across reconnects so KV-cache affinity is preserved.
+# Connected/disconnected state is tracked separately from session history.
 active_sessions: Dict[str, VoiceSession] = {}
+SESSION_TTL_SECONDS = 3600  # Evict idle sessions after 1 hour
+
+def get_or_create_session(session_id: str) -> VoiceSession:
+    now = time.time()
+    # Evict expired sessions
+    expired = [sid for sid, s in active_sessions.items() if not s.connected and (now - s.created_at) > SESSION_TTL_SECONDS]
+    for sid in expired:
+        del active_sessions[sid]
+        logger.info(f"Evicted expired session {sid}")
+
+    if session_id not in active_sessions:
+        worker = balancer.get_node(session_id)
+        active_sessions[session_id] = VoiceSession(session_id, worker)
+        logger.info(f"Created new session {session_id} -> {worker}")
+    else:
+        logger.info(f"Resumed existing session {session_id} (history turns: {active_sessions[session_id].turn_count})")
+    return active_sessions[session_id]
 
 # -----------------------------------------------------------------------------
 # 5. WebSocket Connection & Server
@@ -198,23 +220,26 @@ active_sessions: Dict[str, VoiceSession] = {}
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    # Reset primary LLM delay to fast (50ms) on new connections
-    primary_llm.setup_delay = 0.05
     session_id = websocket.query_params.get("session_id", f"session-{int(time.time() * 1000)}")
-    
-    # Route session sticky to worker
-    gpu_worker = balancer.get_node(session_id)
-    if session_id not in active_sessions:
-        active_sessions[session_id] = VoiceSession(session_id, gpu_worker)
-    
-    session = active_sessions[session_id]
-    logger.info(f"Client connected. SessionID: {session_id} routed to warm worker: {gpu_worker}")
+
+    session = get_or_create_session(session_id)
+    session.connected = True
+    gpu_worker = session.worker
+    logger.info(f"Client connected. SessionID: {session_id} routed to warm worker: {gpu_worker} (turns so far: {session.turn_count})")
 
     async def send_json_msg(event: str, data: str):
         try:
             await websocket.send_json({"event": event, "data": data})
         except Exception:
             pass
+
+    # Announce the assigned worker and whether this is a resumed session
+    await send_json_msg("session_init", json.dumps({
+        "worker": gpu_worker,
+        "session_id": session_id,
+        "resumed": session.turn_count > 0,
+        "history_turns": session.turn_count,
+    }))
 
     async def run_pipeline(prompt_override: Optional[str] = None):
         try:
@@ -262,6 +287,7 @@ async def websocket_endpoint(websocket: WebSocket):
             # Successful completion
             full_response = "".join(session.generated_tokens)
             session.history.append({"role": "assistant", "content": full_response})
+            session.turn_count += 1
             session.state = "Listening"
             await send_json_msg("status", "Finished speaking.")
             await send_json_msg("assistant_response", full_response)
@@ -307,24 +333,54 @@ async def websocket_endpoint(websocket: WebSocket):
                     session.active_task = pipeline_task
 
     except (WebSocketDisconnect, RuntimeError):
-        logger.info(f"Session {session_id} disconnected.")
+        logger.info(f"Session {session_id} disconnected (history preserved, turns: {session.turn_count}).")
         session.reset_pipeline()
     finally:
-        if session_id in active_sessions:
-            del active_sessions[session_id]
+        session.connected = False
+        session.state = "Listening"
 
 # -----------------------------------------------------------------------------
 # 6. Admin Endpoints
 # -----------------------------------------------------------------------------
 @app.get("/health")
 def health_endpoint():
+    connected = sum(1 for s in active_sessions.values() if s.connected)
     return {
         "status": "healthy",
-        "active_connections": len(active_sessions),
+        "active_connections": connected,
+        "total_sessions": len(active_sessions),
         "primary_llm_hits": metrics["primary_hits"],
         "fallback_slm_hits": metrics["fallback_hits"],
         "primary_llm_delay_ms": int(primary_llm.setup_delay * 1000),
-        "fallback_slm_delay_ms": int(fallback_slm.setup_delay * 1000)
+        "fallback_slm_delay_ms": int(fallback_slm.setup_delay * 1000),
+    }
+
+@app.get("/sessions")
+def sessions_endpoint():
+    worker_stats: Dict[str, Dict] = {}
+    for node in workers:
+        worker_stats[node] = {"sessions": 0, "connected": 0, "total_turns": 0}
+
+    for s in active_sessions.values():
+        if s.worker in worker_stats:
+            worker_stats[s.worker]["sessions"] += 1
+            worker_stats[s.worker]["total_turns"] += s.turn_count
+            if s.connected:
+                worker_stats[s.worker]["connected"] += 1
+
+    return {
+        "worker_routing": worker_stats,
+        "session_list": [
+            {
+                "session_id": s.session_id,
+                "worker": s.worker,
+                "state": s.state,
+                "connected": s.connected,
+                "turns": s.turn_count,
+                "history_len": len(s.history),
+            }
+            for s in active_sessions.values()
+        ],
     }
 
 @app.get("/toggle-latency", response_class=PlainTextResponse)
