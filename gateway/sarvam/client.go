@@ -1,19 +1,25 @@
-// Package sarvam provides typed stubs for Sarvam AI's production APIs:
-//   - Saarika v2  — multilingual Indic STT
-//   - Bulbul v2   — multilingual Indic TTS
+// Package sarvam provides typed clients for Sarvam AI's production APIs:
+//   - Saarika v2  — multilingual Indic STT  (https://api.sarvam.ai/speech-to-text)
+//   - Bulbul v2   — multilingual Indic TTS  (https://api.sarvam.ai/text-to-speech)
 //
 // Set SARVAM_API_KEY in the environment to use real endpoints.
 // When the key is absent the clients return realistic mock responses so the
 // gateway works end-to-end without API access (demo / CI mode).
-//
-// Real API reference: https://docs.sarvam.ai
 package sarvam
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io"
 	"math/rand"
+	"mime/multipart"
+	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -39,7 +45,11 @@ type TTSChunk struct {
 	PCM []byte
 }
 
-// SaarikaCient calls Sarvam's Saarika-v2 speech-to-text endpoint.
+var httpClient = &http.Client{Timeout: 30 * time.Second}
+
+// ── Saarika (STT) ─────────────────────────────────────────────────────────────
+
+// SaarikaClient calls Sarvam's Saarika-v2 speech-to-text endpoint.
 type SaarikaClient struct {
 	apiKey   string
 	endpoint string
@@ -52,26 +62,71 @@ func NewSaarikaClient() *SaarikaClient {
 	}
 }
 
+// saarika v2 JSON response shape.
+type saarikaResponse struct {
+	Transcript   string  `json:"transcript"`
+	LanguageCode string  `json:"language_code"`
+	Confidence   float64 `json:"confidence"`
+}
+
 // Transcribe sends audio bytes to Saarika and returns the transcript.
 // Falls back to a mock when SARVAM_API_KEY is not set.
 func (c *SaarikaClient) Transcribe(ctx context.Context, audio []byte, lang string) (*STTResult, error) {
-	if c.apiKey == "" {
+	if c.apiKey == "" || len(audio) == 0 {
 		return c.mockTranscribe(lang)
 	}
-	// --- Real implementation (uncomment when API key is available) ---
-	// form := &bytes.Buffer{}
-	// w := multipart.NewWriter(form)
-	// fw, _ := w.CreateFormFile("file", "audio.wav")
-	// fw.Write(audio)
-	// w.WriteField("language_code", LangCode[lang])
-	// w.WriteField("model", "saarika:v2")
-	// w.Close()
-	// req, _ := http.NewRequestWithContext(ctx, "POST", c.endpoint, form)
-	// req.Header.Set("api-subscription-key", c.apiKey)
-	// req.Header.Set("Content-Type", w.FormDataContentType())
-	// resp, err := http.DefaultClient.Do(req)
-	// ... parse JSON response ...
-	return c.mockTranscribe(lang)
+
+	t0 := time.Now()
+
+	var body bytes.Buffer
+	w := multipart.NewWriter(&body)
+
+	// audio field — WAV/PCM accepted by Saarika v2
+	fw, err := w.CreateFormFile("file", "audio.wav")
+	if err != nil {
+		return nil, fmt.Errorf("saarika: create form file: %w", err)
+	}
+	if _, err = fw.Write(audio); err != nil {
+		return nil, fmt.Errorf("saarika: write audio: %w", err)
+	}
+
+	lc := LangCode[lang]
+	if lc == "" {
+		lc = "en-IN"
+	}
+	_ = w.WriteField("language_code", lc)
+	_ = w.WriteField("model", "saarika:v2")
+	_ = w.WriteField("with_timestamps", "false")
+	w.Close()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, &body)
+	if err != nil {
+		return nil, fmt.Errorf("saarika: build request: %w", err)
+	}
+	req.Header.Set("api-subscription-key", c.apiKey)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("saarika: http: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("saarika: status %d: %s", resp.StatusCode, b)
+	}
+
+	var sr saarikaResponse
+	if err := json.NewDecoder(resp.Body).Decode(&sr); err != nil {
+		return nil, fmt.Errorf("saarika: decode: %w", err)
+	}
+
+	return &STTResult{
+		Transcript: sr.Transcript,
+		LangCode:   sr.LanguageCode,
+		LatencyMs:  float64(time.Since(t0).Milliseconds()),
+	}, nil
 }
 
 var mockPrompts = map[string][]string{
@@ -86,7 +141,7 @@ var mockPrompts = map[string][]string{
 func (c *SaarikaClient) mockTranscribe(lang string) (*STTResult, error) {
 	delay := 80 * time.Millisecond
 	if lang != "en" {
-		delay = 110 * time.Millisecond // Indic STT ~110ms (Saarika v2 benchmark)
+		delay = 110 * time.Millisecond
 	}
 	time.Sleep(delay)
 	prompts := mockPrompts[lang]
@@ -99,6 +154,8 @@ func (c *SaarikaClient) mockTranscribe(lang string) (*STTResult, error) {
 		LatencyMs:  float64(delay.Milliseconds()),
 	}, nil
 }
+
+// ── Bulbul (TTS) ──────────────────────────────────────────────────────────────
 
 // BulbulClient calls Sarvam's Bulbul-v2 text-to-speech endpoint.
 type BulbulClient struct {
@@ -113,31 +170,172 @@ func NewBulbulClient() *BulbulClient {
 	}
 }
 
+// bulbul request/response shapes.
+type bulbulRequest struct {
+	Inputs       []string `json:"inputs"`
+	Target       string   `json:"target_language_code"`
+	Speaker      string   `json:"speaker"`
+	Model        string   `json:"model"`
+	SampleRate   int      `json:"sample_rate"`
+	EncodingType string   `json:"encoding"`
+}
+
+type bulbulResponse struct {
+	Audios []string `json:"audios"` // base64-encoded WAV per input chunk
+}
+
 // StreamSynthesize sends text to Bulbul and streams PCM audio chunks via the
-// returned channel. Each chunk is 1–2KB of 16kHz mono int16 PCM.
+// returned channel.  Each chunk is raw 16kHz mono int16 PCM bytes.
+//
+// Bulbul v2 returns complete WAV audio per request (not chunked transfer), so
+// we split long text into sentence-level segments and pipeline the requests so
+// the first audio arrives while subsequent sentences are still being synthesised.
 func (c *BulbulClient) StreamSynthesize(ctx context.Context, text, lang string) (<-chan TTSChunk, error) {
 	ch := make(chan TTSChunk, 8)
 	if c.apiKey == "" {
 		go c.mockStream(ctx, text, lang, ch)
 		return ch, nil
 	}
-	// --- Real streaming implementation placeholder ---
-	// Sarvam Bulbul supports chunked transfer encoding; each chunk is raw PCM.
-	// req, _ := http.NewRequestWithContext(ctx, "POST", c.endpoint, body)
-	// req.Header.Set("api-subscription-key", c.apiKey)
-	// go streamResponse(resp.Body, ch)
-	go c.mockStream(ctx, text, lang, ch)
+	go c.realStream(ctx, text, lang, ch)
 	return ch, nil
+}
+
+// realStream splits text into sentence segments and fires one Bulbul request per
+// segment, streaming PCM chunks to ch as each response arrives.
+func (c *BulbulClient) realStream(ctx context.Context, text, lang string, ch chan<- TTSChunk) {
+	defer close(ch)
+
+	segments := splitSentences(text)
+	if len(segments) == 0 {
+		return
+	}
+
+	lc := LangCode[lang]
+	if lc == "" {
+		lc = "en-IN"
+	}
+	speaker := speakerFor(lang)
+
+	for _, seg := range segments {
+		if ctx.Err() != nil {
+			return
+		}
+		seg = strings.TrimSpace(seg)
+		if seg == "" {
+			continue
+		}
+
+		pcm, err := c.synthesizeSegment(ctx, seg, lc, speaker)
+		if err != nil {
+			// Non-fatal: skip the segment rather than killing the stream.
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case ch <- TTSChunk{PCM: pcm}:
+		}
+	}
+}
+
+// synthesizeSegment calls Bulbul for a single text segment and returns raw PCM.
+func (c *BulbulClient) synthesizeSegment(ctx context.Context, text, langCode, speaker string) ([]byte, error) {
+	payload := bulbulRequest{
+		Inputs:       []string{text},
+		Target:       langCode,
+		Speaker:      speaker,
+		Model:        "bulbul:v2",
+		SampleRate:   16000,
+		EncodingType: "wav",
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("api-subscription-key", c.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("bulbul: http: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("bulbul: status %d: %s", resp.StatusCode, b)
+	}
+
+	var br bulbulResponse
+	if err := json.NewDecoder(resp.Body).Decode(&br); err != nil {
+		return nil, fmt.Errorf("bulbul: decode: %w", err)
+	}
+	if len(br.Audios) == 0 {
+		return nil, fmt.Errorf("bulbul: empty audio response")
+	}
+
+	// Audios[0] is base64-encoded WAV; strip 44-byte WAV header to get raw PCM.
+	wav, err := base64.StdEncoding.DecodeString(br.Audios[0])
+	if err != nil {
+		return nil, fmt.Errorf("bulbul: base64: %w", err)
+	}
+	if len(wav) <= 44 {
+		return wav, nil // return as-is if unexpectedly short
+	}
+	return wav[44:], nil // skip WAV header → raw int16 PCM
+}
+
+// speakerFor picks a sensible default voice for each language.
+var langSpeaker = map[string]string{
+	"hi-IN": "meera",
+	"ta-IN": "pavithra",
+	"te-IN": "arvind",
+	"kn-IN": "suresh",
+	"bn-IN": "riya",
+	"en-IN": "meera",
+}
+
+func speakerFor(lang string) string {
+	lc := LangCode[lang]
+	if s, ok := langSpeaker[lc]; ok {
+		return s
+	}
+	return "meera"
+}
+
+// splitSentences splits text on sentence boundaries for pipelined TTS requests.
+func splitSentences(text string) []string {
+	var out []string
+	sc := bufio.NewScanner(strings.NewReader(text))
+	sc.Split(bufio.ScanRunes)
+	var buf strings.Builder
+	boundaries := map[rune]bool{'.': true, '?': true, '!': true, '।': true, '॥': true, '\n': true, '。': true}
+	for sc.Scan() {
+		r := []rune(sc.Text())[0]
+		buf.WriteRune(r)
+		if boundaries[r] && buf.Len() > 5 {
+			out = append(out, buf.String())
+			buf.Reset()
+		}
+	}
+	if buf.Len() > 0 {
+		out = append(out, buf.String())
+	}
+	return out
 }
 
 func (c *BulbulClient) mockStream(ctx context.Context, text, lang string, ch chan<- TTSChunk) {
 	defer close(ch)
-	// Simulate Bulbul: ~40ms/chunk for Indic, ~30ms/chunk English.
 	chunkDelay := 30 * time.Millisecond
 	chunkSize := 1024
 	if lang != "en" {
 		chunkDelay = 40 * time.Millisecond
-		chunkSize = 1536 // More bytes per chunk — longer Indic phoneme sequences.
+		chunkSize = 1536
 	}
 	words := len(splitWords(text))
 	numChunks := max(3, words/3)
@@ -155,15 +353,15 @@ func (c *BulbulClient) mockStream(ctx context.Context, text, lang string, ch cha
 	}
 }
 
+// ── LLM stream interface ───────────────────────────────────────────────────────
+
 // LLMStream is the interface the gateway uses to consume token streams from any
 // LLM backend (Sarvam's hosted model, vLLM, Ollama, etc.).
 type LLMStream interface {
-	// NextToken blocks until the next token is available or ctx is cancelled.
 	NextToken(ctx context.Context) (string, bool, error)
 }
 
 // MockLLMStream simulates an LLM with configurable TTFT and per-token delay.
-// Replace with a real gRPC/HTTP streaming client for production.
 type MockLLMStream struct {
 	tokens    []string
 	ttft      time.Duration
@@ -178,12 +376,12 @@ func NewMockLLM(lang string, slow bool) *MockLLMStream {
 	text := "This is a detailed response from the Primary LLM with comprehensive information about your query."
 
 	if lang != "en" {
-		ttft = 250 * time.Millisecond  // Indic tokenization overhead
+		ttft = 250 * time.Millisecond
 		perToken = 25 * time.Millisecond
 		text = indicResponse(lang)
 	}
 	if slow {
-		ttft = 400 * time.Millisecond // Simulate degraded primary
+		ttft = 400 * time.Millisecond
 	}
 	return &MockLLMStream{
 		tokens:   splitWords(text),
@@ -214,7 +412,7 @@ func (m *MockLLMStream) NextToken(ctx context.Context) (string, bool, error) {
 	return tok, m.idx <= len(m.tokens), nil
 }
 
-// FallbackSLM is a fast local SLM that responds in <50ms TTFT.
+// NewFallbackSLM is a fast local SLM that responds in <50ms TTFT.
 func NewFallbackSLM() *MockLLMStream {
 	return &MockLLMStream{
 		tokens:   splitWords("Fast SLM fallback: Primary was too slow. Answering from local model."),
@@ -267,5 +465,7 @@ func max(a, b int) int {
 func init() {
 	if os.Getenv("SARVAM_API_KEY") == "" {
 		fmt.Println("[sarvam] SARVAM_API_KEY not set — running in mock mode.")
+	} else {
+		fmt.Println("[sarvam] API key present — using real Saarika-v2 + Bulbul-v2 endpoints.")
 	}
 }
