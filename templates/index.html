@@ -245,6 +245,39 @@
             user-select: none;
         }
 
+        /* Language selector pills */
+        .lang-selector {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.4rem;
+            margin-top: 0.8rem;
+        }
+
+        .lang-pill {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 0.8rem;
+            padding: 0.3rem 0.75rem;
+            border-radius: 20px;
+            border: 1px solid var(--border-color);
+            background: rgba(255,255,255,0.04);
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            user-select: none;
+        }
+
+        .lang-pill:hover {
+            border-color: var(--accent-purple);
+            color: #fff;
+        }
+
+        .lang-pill.active {
+            background: rgba(138, 43, 226, 0.25);
+            border-color: var(--accent-purple);
+            color: #fff;
+            box-shadow: 0 0 10px rgba(138,43,226,0.3);
+        }
+
         /* Terminal Logs */
         .terminal {
             height: 220px;
@@ -312,7 +345,14 @@
 
     <header>
         <h1>VOICE GATEWAY</h1>
-        <div class="subtitle">Smart Routing & Barge-In Demo</div>
+        <div style="display:flex;align-items:center;gap:1rem;">
+            <div id="gatewayToggle" style="display:flex;align-items:center;gap:0.4rem;background:rgba(255,255,255,0.04);border:1px solid var(--border-color);border-radius:50px;padding:0.3rem 0.8rem;font-size:0.8rem;cursor:pointer;" title="Switch gateway">
+                <span style="color:var(--text-muted)">Gateway:</span>
+                <span id="gwLabel" style="color:var(--accent-cyan);font-weight:600;">Python :8000</span>
+                <span style="color:var(--text-muted);font-size:0.7rem;">⇄</span>
+            </div>
+            <div class="subtitle">Smart Routing & Barge-In Demo</div>
+        </div>
     </header>
 
     <main>
@@ -340,6 +380,20 @@
                         <input type="checkbox" id="chkLatency">
                         Simulate Network Degradation (SLM Fallback)
                     </label>
+                </div>
+
+                <!-- Language Selector -->
+                <div style="margin-top: 1rem; border-top: 1px solid var(--border-color); padding-top: 1rem;">
+                    <label style="display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem; text-transform: uppercase;">Input Language</label>
+                    <div class="lang-selector" id="langSelector">
+                        <div class="lang-pill active" data-lang="auto">Auto-detect</div>
+                        <div class="lang-pill" data-lang="hi">हिंदी</div>
+                        <div class="lang-pill" data-lang="ta">தமிழ்</div>
+                        <div class="lang-pill" data-lang="te">తెలుగు</div>
+                        <div class="lang-pill" data-lang="kn">ಕನ್ನಡ</div>
+                        <div class="lang-pill" data-lang="bn">বাংলা</div>
+                        <div class="lang-pill" data-lang="en">English</div>
+                    </div>
                 </div>
 
                 <!-- Simulation Tools -->
@@ -372,6 +426,22 @@
                     <div class="stat-card">
                         <div class="label">Fallback Hits</div>
                         <div id="statFallbackHits" class="value">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="label">Conversation Turns</div>
+                        <div id="statTurns" class="value">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="label">Session Resumed</div>
+                        <div id="statResumed" class="value">No</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="label">Detected Language</div>
+                        <div id="statLang" class="value">—</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="label">Adaptive TTFT Limit</div>
+                        <div id="statTTFT" class="value">—</div>
                     </div>
                 </div>
             </div>
@@ -406,7 +476,22 @@
         const statSession = document.getElementById("statSession");
         const statPrimaryHits = document.getElementById("statPrimaryHits");
         const statFallbackHits = document.getElementById("statFallbackHits");
+        const statTurns = document.getElementById("statTurns");
+        const statResumed = document.getElementById("statResumed");
+        const statLang = document.getElementById("statLang");
+        const statTTFT = document.getElementById("statTTFT");
         const terminal = document.getElementById("terminal");
+
+        // Language selector state
+        let selectedLang = "auto";
+        document.getElementById("langSelector").addEventListener("click", (e) => {
+            const pill = e.target.closest(".lang-pill");
+            if (!pill) return;
+            document.querySelectorAll(".lang-pill").forEach(p => p.classList.remove("active"));
+            pill.classList.add("active");
+            selectedLang = pill.dataset.lang;
+            logLine("system", `Language set to: ${pill.innerText}`);
+        });
 
         let ws = null;
         let audioContext = null;
@@ -421,6 +506,25 @@
         // Generate a random session ID
         const sessionID = "session-" + Math.floor(Math.random() * 1000000);
         statSession.innerText = sessionID;
+
+        // Gateway selector — toggle between Python :8000 and Go :8080.
+        const GATEWAYS = [
+            { label: "Python :8000", wsBase: "ws://localhost:8000",   apiBase: "http://localhost:8000" },
+            { label: "Go     :8080", wsBase: "ws://localhost:8080",   apiBase: "http://localhost:8080" },
+        ];
+        let gwIndex = 0;
+        const gwLabel = document.getElementById("gwLabel");
+
+        document.getElementById("gatewayToggle").addEventListener("click", () => {
+            if (isConnected) { logLine("system", "Disconnect first before switching gateway."); return; }
+            gwIndex = (gwIndex + 1) % GATEWAYS.length;
+            gwLabel.innerText = GATEWAYS[gwIndex].label;
+            gwLabel.style.color = gwIndex === 1 ? "var(--accent-green)" : "var(--accent-cyan)";
+            logLine("system", "Switched to " + GATEWAYS[gwIndex].label);
+        });
+
+        function gwWsUrl()  { return GATEWAYS[gwIndex].wsBase  + "/ws?session_id=" + sessionID; }
+        function gwApiUrl(path) { return GATEWAYS[gwIndex].apiBase + path; }
 
         // Terminal logger helper
         function logLine(role, text) {
@@ -488,7 +592,7 @@
             const prompt = txtPrompt.value.trim();
             if (prompt && ws && ws.readyState === WebSocket.OPEN) {
                 logLine("system", "Simulating speech completed: " + prompt);
-                ws.send(JSON.stringify({ "event": "speech_end", "prompt": prompt }));
+                ws.send(JSON.stringify({ "event": "speech_end", "prompt": prompt, "language": selectedLang }));
                 txtPrompt.value = "";
             }
         });
@@ -534,7 +638,8 @@
                     if (ws && ws.readyState === WebSocket.OPEN) {
                         ws.send(JSON.stringify({
                             "event": "speech_end",
-                            "prompt": "explain consistency in database clusters"
+                            "prompt": "explain consistency in database clusters",
+                            "language": selectedLang,
                         }));
                     }
                 }
@@ -544,7 +649,7 @@
         // Network latency toggle
         chkLatency.addEventListener("change", async () => {
             try {
-                const resp = await fetch("http://localhost:8000/toggle-latency");
+                const resp = await fetch(gwApiUrl("/toggle-latency"));
                 const text = await resp.text();
                 logLine("system", text);
                 updateStats();
@@ -587,7 +692,7 @@
             btnSendPrompt.disabled = false;
             btnSimulateMic.disabled = false;
 
-            ws = new WebSocket(`ws://localhost:8000/ws?session_id=${sessionID}`);
+            ws = new WebSocket(gwWsUrl());
 
             ws.onopen = async () => {
                 logLine("system", "WebSocket connected successfully.");
@@ -605,7 +710,19 @@
                 } else {
                     const msg = JSON.parse(event.data);
                     
-                    if (msg.event === "status") {
+                    if (msg.event === "session_init") {
+                        const info = JSON.parse(msg.data);
+                        statWorker.innerText = info.worker.replace("GPU-Worker-Node-", "Node-");
+                        statResumed.innerText = info.resumed ? `Yes (${info.history_turns} turns)` : "No";
+                        statTurns.innerText = info.history_turns;
+                        const resumeNote = info.resumed ? ` (resumed — ${info.history_turns} prior turns in KV-cache)` : "";
+                        logLine("system", `Assigned to ${info.worker}${resumeNote}`);
+                    } else if (msg.event === "language_detected") {
+                        const info = JSON.parse(msg.data);
+                        statLang.innerText = info.name;
+                        statTTFT.innerText = `${info.adaptive_timeout_ms} ms`;
+                        logLine("system", `Language: ${info.name} | Adaptive TTFT limit: ${info.adaptive_timeout_ms} ms`);
+                    } else if (msg.event === "status") {
                         setAgentState(currentState, msg.data);
                     } else if (msg.event === "transcription") {
                         logLine("User", msg.data);
@@ -613,6 +730,8 @@
                     } else if (msg.event === "assistant_response") {
                         logLine("Assistant", msg.data);
                         setAgentState("Listening", "Ready...");
+                        const currentTurns = parseInt(statTurns.innerText || "0");
+                        statTurns.innerText = currentTurns + 1;
                         updateStats();
                     } else if (msg.event === "barge_in_triggered") {
                         logLine("system", msg.data);
@@ -663,7 +782,7 @@
         async function startMicrophone() {
             // Check secure context
             if (!window.isSecureContext) {
-                logLine("system", "WARNING: Microphone blocked due to insecure context (non-localhost HTTP). Use http://localhost:8000/ to test audio input.");
+                logLine("system", "WARNING: Microphone blocked (insecure context). Use http://localhost:" + (gwIndex === 1 ? "8080" : "8000") + "/ to test audio input.");
                 return;
             }
             if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -781,16 +900,11 @@
 
         async function updateStats() {
             try {
-                const resp = await fetch("http://localhost:8000/health");
+                const resp = await fetch(gwApiUrl("/health"));
                 const stats = await resp.json();
                 statPrimaryHits.innerText = stats.primary_llm_hits;
                 statFallbackHits.innerText = stats.fallback_slm_hits;
-                
-                // Sync latency checkbox with actual server delay
                 chkLatency.checked = (stats.primary_llm_delay_ms === 400);
-                
-                // Set sticky worker
-                statWorker.innerText = "GPU-Worker-Node-" + (sessionID.charCodeAt(0) % 3);
             } catch (e) {}
         }
     </script>
