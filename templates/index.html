@@ -345,7 +345,14 @@
 
     <header>
         <h1>VOICE GATEWAY</h1>
-        <div class="subtitle">Smart Routing & Barge-In Demo</div>
+        <div style="display:flex;align-items:center;gap:1rem;">
+            <div id="gatewayToggle" style="display:flex;align-items:center;gap:0.4rem;background:rgba(255,255,255,0.04);border:1px solid var(--border-color);border-radius:50px;padding:0.3rem 0.8rem;font-size:0.8rem;cursor:pointer;" title="Switch gateway">
+                <span style="color:var(--text-muted)">Gateway:</span>
+                <span id="gwLabel" style="color:var(--accent-cyan);font-weight:600;">Python :8000</span>
+                <span style="color:var(--text-muted);font-size:0.7rem;">⇄</span>
+            </div>
+            <div class="subtitle">Smart Routing & Barge-In Demo</div>
+        </div>
     </header>
 
     <main>
@@ -500,6 +507,25 @@
         const sessionID = "session-" + Math.floor(Math.random() * 1000000);
         statSession.innerText = sessionID;
 
+        // Gateway selector — toggle between Python :8000 and Go :8080.
+        const GATEWAYS = [
+            { label: "Python :8000", wsBase: "ws://localhost:8000",   apiBase: "http://localhost:8000" },
+            { label: "Go     :8080", wsBase: "ws://localhost:8080",   apiBase: "http://localhost:8080" },
+        ];
+        let gwIndex = 0;
+        const gwLabel = document.getElementById("gwLabel");
+
+        document.getElementById("gatewayToggle").addEventListener("click", () => {
+            if (isConnected) { logLine("system", "Disconnect first before switching gateway."); return; }
+            gwIndex = (gwIndex + 1) % GATEWAYS.length;
+            gwLabel.innerText = GATEWAYS[gwIndex].label;
+            gwLabel.style.color = gwIndex === 1 ? "var(--accent-green)" : "var(--accent-cyan)";
+            logLine("system", "Switched to " + GATEWAYS[gwIndex].label);
+        });
+
+        function gwWsUrl()  { return GATEWAYS[gwIndex].wsBase  + "/ws?session_id=" + sessionID; }
+        function gwApiUrl(path) { return GATEWAYS[gwIndex].apiBase + path; }
+
         // Terminal logger helper
         function logLine(role, text) {
             // Write output to browser dev console (F12)
@@ -623,7 +649,7 @@
         // Network latency toggle
         chkLatency.addEventListener("change", async () => {
             try {
-                const resp = await fetch("http://localhost:8000/toggle-latency");
+                const resp = await fetch(gwApiUrl("/toggle-latency"));
                 const text = await resp.text();
                 logLine("system", text);
                 updateStats();
@@ -666,7 +692,7 @@
             btnSendPrompt.disabled = false;
             btnSimulateMic.disabled = false;
 
-            ws = new WebSocket(`ws://localhost:8000/ws?session_id=${sessionID}`);
+            ws = new WebSocket(gwWsUrl());
 
             ws.onopen = async () => {
                 logLine("system", "WebSocket connected successfully.");
@@ -756,7 +782,7 @@
         async function startMicrophone() {
             // Check secure context
             if (!window.isSecureContext) {
-                logLine("system", "WARNING: Microphone blocked due to insecure context (non-localhost HTTP). Use http://localhost:8000/ to test audio input.");
+                logLine("system", "WARNING: Microphone blocked (insecure context). Use http://localhost:" + (gwIndex === 1 ? "8080" : "8000") + "/ to test audio input.");
                 return;
             }
             if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -874,7 +900,7 @@
 
         async function updateStats() {
             try {
-                const resp = await fetch("http://localhost:8000/health");
+                const resp = await fetch(gwApiUrl("/health"));
                 const stats = await resp.json();
                 statPrimaryHits.innerText = stats.primary_llm_hits;
                 statFallbackHits.innerText = stats.fallback_slm_hits;

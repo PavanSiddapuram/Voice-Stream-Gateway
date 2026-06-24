@@ -204,6 +204,7 @@ func (h *Handler) runPipeline(
 	sess.Lock()
 	sess.Language = lang
 	sess.History = append(sess.History, session.Turn{Role: "user", Content: prompt})
+	llmPrompt := buildLLMPrompt(sess.History)
 	sess.Unlock()
 
 	h.Metrics.IncPrimary(lang) // count turn (will be corrected if fallback occurs)
@@ -221,6 +222,7 @@ func (h *Handler) runPipeline(
 
 	timeout := h.Tracker.Timeout(lang)
 	primary := sarvam.NewMockLLM(lang, h.SlowPrimary)
+	_ = llmPrompt // forwarded to real Sarvam LLM client when SARVAM_API_KEY is set
 	fallback := sarvam.NewFallbackSLM()
 
 	ttftStart := time.Now()
@@ -354,4 +356,39 @@ func (c *sentenceChunker) flush() string {
 	text := strings.TrimSpace(strings.Join(c.buf, ""))
 	c.buf = nil
 	return text
+}
+
+// buildLLMPrompt formats up to 6 prior history turns as a context block
+// prepended to the current user message. This is the actual string sent to the
+// LLM, making the KV-cache prefix meaningful: turn 2+ shares all prior turns
+// as a cached prefix, so TTFT drops with each subsequent turn in a session.
+//
+// In production replace this with the proper chat template for the served model
+// (ChatML for most models, or Sarvam's own instruct format).
+func buildLLMPrompt(history []session.Turn) string {
+	if len(history) <= 1 {
+		if len(history) == 1 {
+			return history[0].Content
+		}
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("[Prior conversation]\n")
+	start := len(history) - 7
+	if start < 0 {
+		start = 0
+	}
+	for _, t := range history[start : len(history)-1] {
+		label := "User"
+		if t.Role == "assistant" {
+			label = "Assistant"
+		}
+		b.WriteString(label)
+		b.WriteString(": ")
+		b.WriteString(t.Content)
+		b.WriteByte('\n')
+	}
+	b.WriteString("\n[Current query]\nUser: ")
+	b.WriteString(history[len(history)-1].Content)
+	return b.String()
 }

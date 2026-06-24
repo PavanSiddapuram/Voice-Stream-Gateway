@@ -62,23 +62,26 @@ bench-compare:
 	@echo "  Voice Gateway Benchmark: Go vs Python"
 	@echo "  KV-Cache Routing | Barge-In | Adaptive TTFT | Indic Languages"
 	@echo "═══════════════════════════════════════════════════════════════════"
-	@for N in 50 500 2000; do \
-		echo ""; \
-		echo "────── $$N concurrent sessions ──────"; \
-		echo "[Python :$(PYTHON_PORT)]"; \
-		python tests/pressure_test.py --concurrency $$N --barge-in-rate 0.2 \
-			--server 127.0.0.1:$(PYTHON_PORT) 2>/dev/null \
-			| grep -E "Throughput|Handshake|TTFT|Barge-In"; \
-		echo ""; \
-		echo "[Go     :$(GO_PORT)]"; \
-		cd gateway/benchmark && go run bench.go \
-			--target ws://127.0.0.1:$(GO_PORT)/ws \
-			--concurrency $$N --barge-in-rate 0.2 2>/dev/null \
-			| grep -E "Throughput|Handshake|TTFT|Barge"; \
-		cd ../..; \
-	done
+	@$(MAKE) _bench-level N=50
+	@$(MAKE) _bench-level N=500
+	@$(MAKE) _bench-level N=2000
 	@echo ""
 	@echo "═══════════════════════════════════════════════════════════════════"
+
+# Internal target — called by bench-compare with N set externally.
+_bench-level:
+	@echo ""
+	@echo "────── $(N) concurrent sessions ──────"
+	@echo "[Python :$(PYTHON_PORT)]"
+	@python tests/pressure_test.py --concurrency $(N) --barge-in-rate 0.2 \
+		--server 127.0.0.1:$(PYTHON_PORT) 2>/dev/null \
+		| grep -E "Throughput|Handshake|TTFT|Barge-In"
+	@echo ""
+	@echo "[Go     :$(GO_PORT)]"
+	@cd gateway/benchmark && go run bench.go \
+		--target ws://127.0.0.1:$(GO_PORT)/ws \
+		--concurrency $(N) --barge-in-rate 0.2 2>/dev/null \
+		| grep -E "Throughput|Handshake|TTFT|Barge"
 
 # Scale stress test: Go only, 10 000 concurrent sessions
 bench-scale:

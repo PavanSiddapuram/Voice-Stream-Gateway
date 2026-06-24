@@ -358,6 +358,28 @@ async def stream_llm_with_fallback(prompt: str, timeout: float = 0.200):
         yield token
 
 
+def _build_llm_prompt(history: List[Dict[str, str]], lang: str) -> str:
+    """
+    Format the last 6 history turns into a context block prepended to the
+    current user message. This is what actually gets sent to the LLM, making
+    the KV-cache prefix non-trivial: turns 2+ share a growing cached prefix
+    (all previous turns), so TTFT drops measurably with each additional turn.
+
+    In production this would be a proper chat template (e.g. ChatML, Llama-3
+    instruct format) matched to whatever model Sarvam is serving.
+    """
+    if len(history) <= 1:
+        return history[-1]["content"] if history else ""
+    context_turns = history[-7:-1]  # up to 6 prior turns, not the current one
+    lines = []
+    for t in context_turns:
+        role_label = "User" if t["role"] == "user" else "Assistant"
+        lines.append(f"{role_label}: {t['content']}")
+    context_block = "\n".join(lines)
+    current = history[-1]["content"]
+    return f"[Prior conversation]\n{context_block}\n\n[Current query]\nUser: {current}"
+
+
 # -----------------------------------------------------------------------------
 # 7. Session State Management
 # -----------------------------------------------------------------------------
@@ -492,7 +514,11 @@ async def websocket_endpoint(websocket: WebSocket):
             session.state = "Speaking"
             await send_json_msg("status", "Streaming Audio Out...")
 
-            chunker = SentenceChunker(max_tokens=15)
+            # Build a context-aware prompt from the last 6 history turns so the
+            # LLM (and its KV-cache) sees the full conversation. Without this,
+            # every request is stateless and prefix-caching saves nothing.
+            llm_prompt = _build_llm_prompt(session.history, lang)
+            chunker = SentenceChunker(max_tokens=5)
 
             async def flush_to_tts(text: str):
                 if lang in INDIC_LANGS:
@@ -507,7 +533,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         await websocket.send_bytes(audio)
                         session.sent_tokens_count = len(session.generated_tokens)
 
-            async for token in stream_llm_with_fallback_lang(prompt, lang):
+            async for token in stream_llm_with_fallback_lang(llm_prompt, lang):
                 session.generated_tokens.append(token)
                 chunk = chunker.push(token)
                 if chunk:
