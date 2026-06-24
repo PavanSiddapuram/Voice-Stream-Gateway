@@ -257,7 +257,9 @@ func (h *Handler) runPipeline(
 
 	send("status", "Streaming Audio Out...")
 
-	chunker := &sentenceChunker{maxTokens: 15}
+	// 5-token buffer gives ~100ms of latency headroom before forced flush,
+	// balancing sentence coherence against time-to-first-audio.
+	chunker := &sentenceChunker{maxTokens: 5}
 	allTokens := []string{}
 
 	flushChunk := func(text string) {
